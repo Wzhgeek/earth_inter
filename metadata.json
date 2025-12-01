@@ -1,0 +1,7 @@
+{
+  "name": "Copy of J.A.R.V.I.S. Holographic Interface",
+  "description": "A futuristic HUD controlled by hand gestures, featuring a 3D holographic earth and real-time biometric analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
