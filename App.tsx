@@ -4,7 +4,7 @@ import { VisionService } from './services/visionService';
 import { HandLandmarker } from '@mediapipe/tasks-vision';
 import { HolographicEarth } from './components/HolographicEarth';
 import { CyberHUD } from './components/CyberHUD';
-import { TrackingState, Continent, HandData } from './types';
+import { TrackingState, Continent, HandData, PLANETS, PlanetConfig } from './types';
 import { Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
@@ -13,6 +13,7 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeContinent, setActiveContinent] = useState<Continent>(Continent.UNKNOWN);
+  const [activePlanet, setActivePlanet] = useState<PlanetConfig>(PLANETS[0]);
 
   // Mutable Ref to store latest tracking data (accessed by R3F loop and HUD loop)
   const trackingRef = useRef<TrackingState>({
@@ -36,7 +37,6 @@ const App: React.FC = () => {
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          // Important: Explicitly play the video
           videoRef.current.onloadedmetadata = () => {
             videoRef.current?.play();
           };
@@ -45,7 +45,6 @@ const App: React.FC = () => {
         handLandmarker = await VisionService.initialize();
         setIsLoading(false);
         
-        // Start prediction loop only after init
         predict();
       } catch (err) {
         console.error(err);
@@ -64,13 +63,11 @@ const App: React.FC = () => {
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       
-      // Only process if video has data and dimensions
       if (video.readyState < 2 || !ctx) {
         animationFrameId = requestAnimationFrame(predict);
         return;
       }
 
-      // Ensure canvas matches video size
       if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
@@ -81,19 +78,16 @@ const App: React.FC = () => {
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      // Reset tracking state
       let newLeftHand: HandData | null = null;
       let newRightHand: HandData | null = null;
 
       if (results.landmarks) {
         for (let i = 0; i < results.landmarks.length; i++) {
           const landmarks = results.landmarks[i];
-          const handedness = results.handedness[i][0].categoryName; // "Left" or "Right"
+          const handedness = results.handedness[i][0].categoryName;
           
-          // Draw Skeleton
-          drawConnectors(ctx, landmarks, handedness);
+          drawConnectors(ctx, landmarks, activePlanet.color); // Use planet color for skeleton
 
-          // Update Data State
           const handData: HandData = {
             landmarks,
             handedness: handedness as 'Left' | 'Right'
@@ -120,24 +114,22 @@ const App: React.FC = () => {
         (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
       }
     };
-  }, []);
+  }, [activePlanet]); // Re-bind effect if planet color changes usually not needed for canvas draw but ensures color update
 
-  // Helper to draw skeleton with better visuals
-  const drawConnectors = (ctx: CanvasRenderingContext2D, landmarks: any[], handedness: string) => {
-    ctx.strokeStyle = '#00FFFF';
+  const drawConnectors = (ctx: CanvasRenderingContext2D, landmarks: any[], color: string) => {
+    ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.shadowBlur = 10;
-    ctx.shadowColor = '#00FFFF';
+    ctx.shadowColor = color;
     ctx.fillStyle = '#FFFFFF';
 
-    // Connections for hand skeleton
     const connections = [
-      [0,1], [1,2], [2,3], [3,4], // Thumb
-      [0,5], [5,6], [6,7], [7,8], // Index
-      [5,9], [9,10], [10,11], [11,12], // Middle
-      [9,13], [13,14], [14,15], [15,16], // Ring
-      [13,17], [17,18], [18,19], [19,20], // Pinky
-      [0,17] // Palm base
+      [0,1], [1,2], [2,3], [3,4], 
+      [0,5], [5,6], [6,7], [7,8], 
+      [5,9], [9,10], [10,11], [11,12], 
+      [9,13], [13,14], [14,15], [15,16], 
+      [13,17], [17,18], [18,19], [19,20], 
+      [0,17] 
     ];
 
     ctx.beginPath();
@@ -149,7 +141,6 @@ const App: React.FC = () => {
     });
     ctx.stroke();
 
-    // Draw joints
     for (const lm of landmarks) {
        ctx.beginPath();
        ctx.arc(lm.x * ctx.canvas.width, lm.y * ctx.canvas.height, 3, 0, 2 * Math.PI);
@@ -189,19 +180,25 @@ const App: React.FC = () => {
           <HolographicEarth 
             trackingRef={trackingRef} 
             onContinentChange={setActiveContinent}
+            planet={activePlanet}
+            key={activePlanet.id} // Forces re-mount on planet change to ensure texture load
           />
         </Canvas>
       </div>
 
       {/* UI Layer */}
-      <CyberHUD trackingRef={trackingRef} activeContinent={activeContinent} />
+      <CyberHUD 
+        trackingRef={trackingRef} 
+        activeContinent={activeContinent}
+        activePlanet={activePlanet}
+        onSelectPlanet={setActivePlanet}
+      />
 
       {/* Loading / Error States */}
       {isLoading && (
         <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black text-cyan-500">
           <Loader2 className="w-16 h-16 animate-spin mb-4" />
           <h2 className="text-2xl font-mono tracking-widest animate-pulse">INITIALIZING J.A.R.V.I.S...</h2>
-          <p className="text-xs text-cyan-800 mt-2">LOADING NEURAL NETWORKS</p>
         </div>
       )}
 

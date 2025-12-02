@@ -1,17 +1,22 @@
-import React, { useRef, useMemo } from 'react';
-import { useFrame, useLoader, useThree } from '@react-three/fiber';
+import React, { useRef, useMemo, useEffect } from 'react';
+import { useFrame, useLoader, useThree, ThreeElements } from '@react-three/fiber';
 import * as THREE from 'three';
-import { TrackingState, Continent } from '../types';
+import { TrackingState, Continent, PlanetConfig } from '../types';
 
-interface HolographicEarthProps {
-  trackingRef: React.MutableRefObject<TrackingState>;
-  onContinentChange: (continent: Continent) => void;
+// Extend JSX.IntrinsicElements to include Three.js elements used by React Three Fiber
+declare global {
+  namespace JSX {
+    interface IntrinsicElements extends ThreeElements {}
+  }
 }
 
-// Earth textures
-const EARTH_MAP = 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg';
+interface HolographicPlanetProps {
+  trackingRef: React.MutableRefObject<TrackingState>;
+  onContinentChange: (continent: Continent) => void;
+  planet: PlanetConfig;
+}
 
-export const HolographicEarth: React.FC<HolographicEarthProps> = ({ trackingRef, onContinentChange }) => {
+export const HolographicEarth: React.FC<HolographicPlanetProps> = ({ trackingRef, onContinentChange, planet }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const cloudRef = useRef<THREE.Mesh>(null);
   const ringRef = useRef<THREE.Mesh>(null);
@@ -25,29 +30,39 @@ export const HolographicEarth: React.FC<HolographicEarthProps> = ({ trackingRef,
   const currentRotationSpeedRef = useRef(0);
   const currentPositionRef = useRef(new THREE.Vector3(-2.2, -0.2, 0)); // Initial position
 
-  const earthTexture = useLoader(THREE.TextureLoader, EARTH_MAP);
+  // Load texture dynamically based on planet prop
+  const texture = useLoader(THREE.TextureLoader, planet.texture);
 
-  // Holographic Material Shader
+  // Re-create materials when planet changes to update colors
   const earthMaterial = useMemo(() => {
     return new THREE.MeshBasicMaterial({
-      map: earthTexture,
+      map: texture,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.9,
       blending: THREE.AdditiveBlending,
       side: THREE.FrontSide,
-      color: new THREE.Color(0x00FFFF)
+      color: new THREE.Color(planet.color)
     });
-  }, [earthTexture]);
+  }, [texture, planet.color]);
 
   const wireframeMaterial = useMemo(() => {
     return new THREE.MeshBasicMaterial({
-      color: 0x0088aa,
+      color: new THREE.Color(planet.color),
       wireframe: true,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.2,
       blending: THREE.AdditiveBlending
     });
-  }, []);
+  }, [planet.color]);
+
+  const ringMaterial = useMemo(() => {
+    return new THREE.MeshBasicMaterial({
+      color: new THREE.Color(planet.color),
+      transparent: true,
+      opacity: 0.4,
+      side: THREE.DoubleSide
+    });
+  }, [planet.color]);
 
   useFrame((state, delta) => {
     if (!meshRef.current || !cloudRef.current || !ringRef.current || !groupRef.current) return;
@@ -55,7 +70,7 @@ export const HolographicEarth: React.FC<HolographicEarthProps> = ({ trackingRef,
     // Base rotation
     const baseSpeed = 0.1 * delta;
     let targetRotationSpeed = baseSpeed;
-    let targetScale = currentScaleRef.current; // Maintain current scale by default
+    let targetScale = currentScaleRef.current;
     const targetPosition = currentPositionRef.current.clone();
 
     const { leftHand } = trackingRef.current;
@@ -66,59 +81,41 @@ export const HolographicEarth: React.FC<HolographicEarthProps> = ({ trackingRef,
       const palmX = landmarks[9].x; 
       const palmY = landmarks[9].y;
 
-      // Distance for pinch detection (Thumb tip 4 vs Index tip 8)
       const thumb = landmarks[4];
       const index = landmarks[8];
       const distance = Math.sqrt(
         Math.pow(thumb.x - index.x, 2) + Math.pow(thumb.y - index.y, 2)
       );
       
-      // Threshold for switching between Drag (Pinch) and Scale/Rotate (Open)
-      // Lowered to 0.04 to allow "close fingers" to register as small scale before turning into a drag
+      // Threshold 0.04
       const PINCH_THRESHOLD = 0.04; 
       const isPinching = distance < PINCH_THRESHOLD;
 
       if (isPinching) {
-        // --- DRAG MODE (Move Position) ---
-        // Map 0..1 (MediaPipe) to Viewport Coordinates
-        
+        // --- DRAG MODE ---
         const visualX = (1 - palmX) * viewport.width - (viewport.width / 2);
-        const visualY = -(palmY * viewport.height - (viewport.height / 2)); // Y is inverted in 3D
+        const visualY = -(palmY * viewport.height - (viewport.height / 2)); 
 
-        // Smooth follow
         targetPosition.set(visualX, visualY, 0);
-        
-        // While dragging, keep rotation steady or slow down
         targetRotationSpeed = baseSpeed * 0.5;
 
       } else {
-        // --- INSPECT MODE (Rotate & Scale) ---
-        
-        // 1. Rotation (Horizontal movement of open hand)
-        // Center point is 0.5. Left < 0.5, Right > 0.5
+        // --- INSPECT MODE ---
         const rotationInput = (palmX - 0.5) * -8.0 * delta; 
         targetRotationSpeed += rotationInput;
 
-        // 2. Scale (Distance between fingers)
-        // Formula optimized to allow very small scales
-        // dist 0.04 (threshold) -> scale ~0.3 (Very Small)
-        // dist 0.2  (normal)    -> scale ~2.5
-        // dist 0.4  (wide)      -> scale ~5.0
         let desiredScale = distance * 13.0; 
-        
-        // Clamp: Min 0.3 (Tiny), Max 6.0 (Huge)
         desiredScale = Math.max(0.3, Math.min(desiredScale, 6.0));
-        
         targetScale = desiredScale;
       }
     } else {
        // Idle breathing animation
-       targetScale = 2.2 + Math.sin(state.clock.elapsedTime) * 0.1;
+       targetScale = 2.2 + Math.sin(state.clock.elapsedTime) * 0.05;
     }
 
     // Apply Smoothing (Lerp)
     currentRotationSpeedRef.current = THREE.MathUtils.lerp(currentRotationSpeedRef.current, targetRotationSpeed, 0.1);
-    currentScaleRef.current = THREE.MathUtils.lerp(currentScaleRef.current, targetScale, 0.1); // Increased responsiveness for scale
+    currentScaleRef.current = THREE.MathUtils.lerp(currentScaleRef.current, targetScale, 0.1); 
     currentPositionRef.current.lerp(targetPosition, 0.1);
 
     // Update Transform
@@ -134,23 +131,29 @@ export const HolographicEarth: React.FC<HolographicEarthProps> = ({ trackingRef,
     ringRef.current.rotation.z -= 0.002;
     ringRef.current.scale.copy(meshRef.current.scale).multiplyScalar(1.4);
 
-    // --- CONTINENT CALCULATION ---
-    const rotationY = meshRef.current.rotation.y % (Math.PI * 2);
-    const normalizedRot = rotationY < 0 ? rotationY + Math.PI * 2 : rotationY;
-    const deg = THREE.MathUtils.radToDeg(normalizedRot);
-    
-    let currentContinent = Continent.UNKNOWN;
-    if (deg < 60 || deg > 330) currentContinent = Continent.AFRICA_EUROPE;
-    else if (deg >= 60 && deg < 160) currentContinent = Continent.AMERICAS;
-    else if (deg >= 160 && deg < 250) currentContinent = Continent.PACIFIC;
-    else currentContinent = Continent.ASIA;
-
-    onContinentChange(currentContinent);
+    // --- SIMPLE REGION CALCULATION ---
+    // For Mars/Moon we just keep the math simple for now, 
+    // or we could map craters if we had specific lat/lon data.
+    // Keeping the original "Continent" logic for Earth, defaulting to sectors for others.
+    if (planet.id === 'earth') {
+      const rotationY = meshRef.current.rotation.y % (Math.PI * 2);
+      const normalizedRot = rotationY < 0 ? rotationY + Math.PI * 2 : rotationY;
+      const deg = THREE.MathUtils.radToDeg(normalizedRot);
+      
+      let currentContinent = Continent.UNKNOWN;
+      if (deg < 60 || deg > 330) currentContinent = Continent.AFRICA_EUROPE;
+      else if (deg >= 60 && deg < 160) currentContinent = Continent.AMERICAS;
+      else if (deg >= 160 && deg < 250) currentContinent = Continent.PACIFIC;
+      else currentContinent = Continent.ASIA;
+      onContinentChange(currentContinent);
+    } else {
+       onContinentChange(Continent.UNKNOWN);
+    }
   });
 
   return (
     <group ref={groupRef}>
-      {/* Core Earth */}
+      {/* Core Planet */}
       <mesh ref={meshRef}>
         <sphereGeometry args={[1, 64, 64]} />
         <primitive object={earthMaterial} attach="material" />
@@ -165,12 +168,12 @@ export const HolographicEarth: React.FC<HolographicEarthProps> = ({ trackingRef,
       {/* Decorative Ring */}
       <mesh ref={ringRef} rotation={[Math.PI / 3, 0, 0]}>
         <torusGeometry args={[1.2, 0.02, 16, 100]} />
-        <meshBasicMaterial color={0x00FFFF} transparent opacity={0.5} />
+        <primitive object={ringMaterial} attach="material" />
       </mesh>
       
-      {/* Ambient Light */}
-      <ambientLight intensity={1.5} color={0x00FFFF} />
-      <pointLight position={[10, 10, 10]} intensity={2} color="#ccffff" />
+      {/* Dynamic Lights */}
+      <ambientLight intensity={1.0} color={planet.color} />
+      <pointLight position={[10, 10, 10]} intensity={2} color={planet.color} />
     </group>
   );
 };
